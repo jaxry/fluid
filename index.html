@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html class='no-js'>
+    <head>
+        <meta charset='utf-8'>
+        <meta http-equiv='X-UA-Compatible' content='IE=edge,chrome=1'>
+        <title>Fluid</title>
+        <meta name='description' content=''>
+        <meta name='viewport' content='width=device-width'>
+
+        <link rel='stylesheet' href='css/normalize.min.css'>
+        <link rel='stylesheet' href='css/main.css'>
+
+        <script src='js/vendor/dat.gui.min.js'></script>
+        <script src='js/vendor/stats.js'></script>
+    </head>
+    <body>
+
+        <canvas id='canvas'></canvas>
+
+        <script id='vertex-shader' type='x-shader/x-vertex'>
+            attribute vec2 a_offset;
+            attribute vec2 a_position;
+
+            varying vec2 v_texCoord;
+            varying vec2 v_offset;
+
+
+            void main() {
+                vec2 clipSpace = a_position * 2.0 - 1.0;
+               
+                gl_Position = vec4(clipSpace, 0, 1);
+
+                v_texCoord = a_position;
+                v_offset = a_offset;
+            }
+        </script>
+        <script id='add-force-shader' type='x-shader/x-fragment'>
+            precision mediump float;
+
+            uniform vec2 u_resolution;
+            uniform vec2 u_mouse;
+            uniform vec2 u_mouseDelta;
+            uniform float u_speed;
+            uniform sampler2D u_framebuffer;
+
+            varying vec2 v_texCoord;
+
+            float scale = 8.0;
+
+            void main() {
+
+                float d = length(u_resolution * (u_mouse - v_texCoord));
+
+                vec2 color = mix(0.25 * u_mouseDelta * u_speed * scale, vec2(0, 0), 
+                                 smoothstep(0.0, scale + u_speed * scale, d));
+
+                gl_FragColor = vec4(color + texture2D(u_framebuffer, v_texCoord).xy, 0, 1);
+
+            }
+        </script>
+        <script id='diffuse-shader' type='x-shader/x-fragment'>
+            precision mediump float;
+
+            uniform vec2 u_onePixel;
+            uniform sampler2D u_framebuffer;
+
+            varying vec2 v_texCoord;
+
+            float a = 1.0;
+
+            vec2 vAt(int x, int y) {
+                return texture2D(u_framebuffer, v_texCoord + u_onePixel * vec2(x, y)).xy;
+            }
+
+            void main() {
+
+                vec2 diffuse = (a*vAt(0, 0) + vAt(1, 0) + vAt(-1, 0) + vAt(0, 1) + vAt(0, -1)) / (a + 4.0);
+
+                gl_FragColor = vec4(diffuse, 0, 1);
+            }
+        </script>
+        <script id='advect-shader' type='x-shader/x-fragment'>
+            precision mediump float;
+
+            uniform vec2 u_resolution;
+            uniform sampler2D u_framebuffer;
+
+            varying vec2 v_texCoord;
+
+            vec2 bilerp(vec2 c) {
+                vec2 neighbor = floor(c);
+                vec2 s0 = neighbor / u_resolution;
+                vec2 s1 = floor(neighbor + 1.0) / u_resolution;
+                vec2 d = c - neighbor;
+
+                return mix(mix(texture2D(u_framebuffer, s0).xy, texture2D(u_framebuffer, vec2(s0.x, s1.y)).xy, d.y),
+                           mix(texture2D(u_framebuffer, vec2(s1.x, s0.y)).xy, texture2D(u_framebuffer, s1).xy, d.y),
+                           d.x);
+            }
+
+            void main() {
+
+                vec2 newPos = v_texCoord * u_resolution - texture2D(u_framebuffer, v_texCoord).xy * 4.0;
+
+                gl_FragColor = texture2D(u_framebuffer, newPos / u_resolution);
+            }
+        </script>
+        <script id='divergence-shader' type='x-shader/x-fragment'>
+            precision mediump float;
+
+            uniform sampler2D u_framebuffer;
+            uniform vec2 u_onePixel;
+            uniform vec2 u_resolution;
+            varying vec2 v_texCoord;
+
+            vec2 vAt(int x, int y) {
+                return texture2D(u_framebuffer, v_texCoord + u_onePixel * vec2(x, y)).xy;
+            }
+
+            void main() {
+
+                float divergence =  -0.5 * (vAt(1, 0).x - vAt(-1, 0).x + vAt(0, 1).y - vAt(0, -1).y);
+                gl_FragColor = vec4(divergence);
+            }
+        </script>
+        <script id='poisson-jacobi-shader' type='x-shader/x-fragment'>
+            precision mediump float;
+
+            uniform sampler2D u_pressure;
+            uniform sampler2D u_divergence;
+            uniform vec2 u_onePixel;
+            varying vec2 v_texCoord;
+
+            float sAt(int x, int y) {
+                return texture2D(u_pressure, v_texCoord + u_onePixel * vec2(x, y)).r;
+            }
+            void main() {
+
+                float pressure = ( sAt(1, 0) + sAt(-1, 0) + sAt(0, 1) + sAt(0, -1) + texture2D(u_divergence, v_texCoord).r ) / 4.0;
+                gl_FragColor = vec4(pressure);
+            }
+        </script>
+        <script id='gradient-subtract-shader' type='x-shader/x-fragment'>
+            precision mediump float;
+
+            uniform sampler2D u_framebuffer;
+            uniform sampler2D u_pressure;
+            uniform vec2 u_onePixel;
+            uniform vec2 u_resolution;
+            varying vec2 v_texCoord;
+            
+            float sAt(int x, int y) {
+                return texture2D(u_pressure, v_texCoord + u_onePixel * vec2(x, y)).r;
+            }
+            void main() {
+
+                vec2 gradient = 0.5 * vec2( sAt(1, 0) - sAt(-1, 0), sAt(0, 1) - sAt(0, -1) );
+                gl_FragColor = vec4(texture2D(u_framebuffer, v_texCoord).xy - gradient, 0, 1);
+            }
+        </script>
+        <script id='boundary-condition-shader' type='x-shader/x-fragment'>
+            precision mediump float;
+
+            uniform sampler2D u_framebuffer;
+            uniform float u_scale;
+            
+            varying vec2 v_texCoord;
+            varying vec2 v_offset;
+            
+            void main() {
+
+                gl_FragColor = u_scale * texture2D(u_framebuffer, v_texCoord + v_offset);
+                // gl_FragColor = vec4(v_offset * 10000.0, 0, 1);
+            }
+        </script>
+        <script id='screen-shader' type='x-shader/x-fragment'>
+            precision mediump float;
+
+            uniform sampler2D u_velocity;
+            uniform sampler2D u_pressure;
+            uniform sampler2D u_background;
+            varying vec2 v_texCoord;
+
+            void main() {
+                vec2 v = (texture2D(u_velocity, v_texCoord).xy) / 2.0 + 0.5;
+                float p = (texture2D(u_pressure, v_texCoord).r) / 2.0 + 0.5;
+                // float a = max(abs(v.r), abs(v.g));
+                // gl_FragColor = texture2D(u_background, v_texCoord) - vec4(p, a, 0, 1);
+                gl_FragColor = vec4(p, v.x, v.y, 1);
+                // gl_FragColor = texture2D(u_velocity, v_texCoord);
+
+
+                // gl_FragColor = vec4(1, 1, 1, 1);
+ 
+            }
+        </script>
+        <script id='background-shader' type='x-shader/x-fragment'>
+            precision mediump float;
+            varying vec2 v_texCoord;
+            void main() {
+                gl_FragColor = mix(vec4(0.95), vec4(0.05), 
+                               smoothstep(0.0, 1.7, length(v_texCoord - vec2(0.5))));
+            }
+        </script>
+        <script id='zero-color-shader' type='x-shader/x-fragment'>
+            precision mediump float;
+            void main() {
+                gl_FragColor = vec4(0.0);
+            }
+        </script>
+        <script src='js/main.js'></script>
+    </body>
+</html>
