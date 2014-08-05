@@ -49,7 +49,7 @@ function init() {
         c2: [128, 255, 255],
         c3: [128, 0, 0],
         c4: [128, 255, 0],
-        c5: [255, 0, 0],
+        c5: [200, 0, 0],
         
         setResolution: function() {
             this.resolutionScale = this.resolution / Math.max(window.innerWidth, window.innerHeight);
@@ -456,7 +456,7 @@ function makeProgram(gl, vertexShaderID, fragmentShaderID, params) {
 function initGui() {
 
     var controller = {
-        viscosity: 35,
+        viscosity: 50,
         pressure: 20
     };
 
@@ -472,7 +472,7 @@ function initGui() {
     gui.addColor(params, 'c5').name('Pressure Color').onChange(programs.screen.setColors);
 
     function onViscosityChange(x) {
-        params.viscosity = polyLerp(x, 1, 35, 100, 1, 5.5, 40);
+        params.viscosity = polyLerp(x, 1, 50, 100, 1, 8, 45);
     }
     onViscosityChange(controller.viscosity);
 

@@ -216,7 +216,7 @@
                 c += u_c5 * p * scale * 2.0;
                
                 // float sp = step(0.0, sign(p));
-                // c = mix(c, sp*c5 + (1.0 - sp)*c6, abs(p));
+                // c = mix(c, sp*u_c5 - (1.0 - sp)*u_c5, abs(p * 15.0));
 
                 gl_FragColor = vec4(c, 1);
             }
