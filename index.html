@@ -12,6 +12,17 @@
 
         <script src='js/vendor/stats.js'></script>
         <script src='js/vendor/dat.gui.min.js'></script>
+
+        <script>
+          (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+          (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+          m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+          })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+          ga('create', 'UA-48809051-2', 'auto');
+          ga('send', 'pageview');
+
+        </script>
     </head>
     <body>
 
@@ -181,18 +192,36 @@
         <script id='screen-shader' type='x-shader/x-fragment'>
             precision mediump float;
 
+            uniform vec3 u_c1;
+            uniform vec3 u_c2;
+            uniform vec3 u_c3;
+            uniform vec3 u_c4;
+            uniform vec3 u_c5;
             uniform float u_gridScale;
             uniform sampler2D u_velocity;
             uniform sampler2D u_pressure;
             
             varying vec2 v_texCoord;
 
+            float scale = 9.0;
+
             void main() {
-                vec2 v = (texture2D(u_velocity, v_texCoord).xy) / 10.0 + 0.5;
-                float p = (texture2D(u_pressure, v_texCoord).r) * u_gridScale / 12.0 + 0.5;
-                // gl_FragColor = vec4(0.0, texture2D(u_pressure, v_texCoord).r * u_gridScale / 2.0, -texture2D(u_pressure, v_texCoord).r * u_gridScale / 2.0, 1);
-                gl_FragColor = vec4(p, v.x, v.y, 1);
+
+                vec2 v = texture2D(u_velocity, v_texCoord).xy;
+                float p = texture2D(u_pressure, v_texCoord).r;
+
+                vec3 c = mix(mix(u_c3, u_c4, smoothstep(-scale, scale, v.x)),
+                             mix(u_c1, u_c2, smoothstep(-scale, scale, v.x)), smoothstep(-scale, scale, v.y));
+                
+                c += u_c5 * p * scale * 2.0;
+               
+                // float sp = step(0.0, sign(p));
+                // c = mix(c, sp*c5 + (1.0 - sp)*c6, abs(p));
+
+                gl_FragColor = vec4(c, 1);
             }
+
+
         </script>
         <script id='conserve-pressure-shader' type='x-shader/x-fragment'>
             precision mediump float;

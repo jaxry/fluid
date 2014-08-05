@@ -42,16 +42,26 @@ function init() {
     params = {
         resolution: 500,
         resolutionScale: null,
+        iterations: 40,
         viscosity: null,
         pressure: null,
-
+        c1: [128, 0, 255],
+        c2: [128, 255, 255],
+        c3: [128, 0, 0],
+        c4: [128, 255, 0],
+        c5: [255, 0, 0],
+        
         setResolution: function() {
             this.resolutionScale = this.resolution / Math.max(window.innerWidth, window.innerHeight);
         }
     };
 
     canvas =  document.getElementById('canvas');
-    gl = canvas.getContext('webgl');
+    gl = canvas.getContext('webgl', {
+        alpha: false,
+        depth: false,
+        stencil: false
+    });
 
     if (!gl){
         alert('Your browser does not support WebGL.');
@@ -294,7 +304,7 @@ function makeFluidSimProgram() {
             gl.activeTexture(gl.TEXTURE1);
             gl.bindTexture(gl.TEXTURE_2D, framebuffers.divergence.texture);
             gl.uniform1i(pJacobi.u_divergence, 1);
-            for (var i = 0; i < 40; i++) {
+            for (var i = 0; i < params.iterations; i++) {
                 gl.useProgram(pJacobi);
                 framebuffers.pressure.use();
                 vertexHandler.drawInterior();
@@ -316,7 +326,26 @@ function makeFluidSimProgram() {
 
 function makeScreenProgram() {
     var program = makeProgram(gl, 'vertex-shader', 'screen-shader',
-                              {uniforms: ['u_gridScale', 'u_pressure', 'u_background']});
+                              {uniforms: ['u_c1', 'u_c2', 'u_c3', 'u_c4', 'u_c5', 'u_gridScale', 'u_pressure', 'u_background']});
+
+    function setColors() {
+        var norm = {};
+        for (var i = 1; i <= 5; i++) {
+            norm[i] = new Array(3);
+            for (var j = 0; j < 3; j++) {
+                norm[i][j] = params['c' + i][j] / 255;
+            }
+        }
+
+        gl.useProgram(program);
+        gl.uniform3fv(program.u_c1, norm[1]);
+        gl.uniform3fv(program.u_c2, norm[2]);
+        gl.uniform3fv(program.u_c3, norm[3]);
+        gl.uniform3fv(program.u_c4, norm[4]);
+        gl.uniform3fv(program.u_c5, norm[5]);
+        gl.useProgram(null);
+    }
+    setColors();
 
     return {
         draw: function() {
@@ -330,7 +359,9 @@ function makeScreenProgram() {
             gl.bindTexture(gl.TEXTURE_2D, framebuffers.pressure.texture);
             gl.bindFramebuffer(gl.FRAMEBUFFER, null);
             vertexHandler.drawClosure();
-        }
+        },
+
+        setColors: setColors
     };
 }
 
@@ -425,17 +456,23 @@ function makeProgram(gl, vertexShaderID, fragmentShaderID, params) {
 function initGui() {
 
     var controller = {
-        viscosity: 30,
+        viscosity: 35,
         pressure: 20
     };
 
     var gui = new dat.GUI();
     gui.add(params, 'resolution', 100, 1500).step(10).name('Resolution').onFinishChange(window.onresize);
+    gui.add(params, 'iterations', 1, 100).step(1).name('Accuracy');
     gui.add(controller, 'viscosity', 1, 100).step(1).name('Viscosity').onChange(onViscosityChange);
     gui.add(controller, 'pressure', 0, 100).step(1).name('Pressure').onChange(onPressureChange);
+    gui.addColor(params, 'c1').name('Color 1').onChange(programs.screen.setColors);
+    gui.addColor(params, 'c2').name('Color 2').onChange(programs.screen.setColors);
+    gui.addColor(params, 'c3').name('Color 3').onChange(programs.screen.setColors);
+    gui.addColor(params, 'c4').name('Color 4').onChange(programs.screen.setColors);
+    gui.addColor(params, 'c5').name('Pressure Color').onChange(programs.screen.setColors);
 
     function onViscosityChange(x) {
-        params.viscosity = polyLerp(x, 1, 35, 100, 1, 6, 50);
+        params.viscosity = polyLerp(x, 1, 35, 100, 1, 5.5, 40);
     }
     onViscosityChange(controller.viscosity);
 
