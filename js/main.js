@@ -1,30 +1,52 @@
 
-(function() { //scoping function to contain global variables
+(function() {
 
 'use strict';
 main();
 
-var gl, canvas, programs, framebuffers, vertexHandler, input, constants;
+var gl, canvas, programs, framebuffers, vertexHandler, input, constants, params;
 
 function main() {
     init();
+    initGui();
     animate();
 }
 
 function init() {
-    framebuffers = {};
-    programs = {};
+    framebuffers = {
+        velocity: null,
+        pressure: null,
+        divergence: null
+    };
+    programs = {
+        fluidSim: null,
+        addForce: null,
+        screen: null
+    };
     input = {
-        smoothing: 8
+        smoothing: 4,
+        mouseX: 0, mouseY: 0,
+        mouseDx: 0, mouseDy: 0,
+        speed: 0
     };
     constants = {
         pixelX: null,
         pixelY: null,
         aspectRatio: null,
-        backgroundTexture: null,
+        gridScale: null,
         attribs: {
             'a_position': 0,
             'a_offset': 1
+        }
+    };
+    params = {
+        resolution: 500,
+        resolutionScale: null,
+        viscosity: null,
+        pressure: null,
+
+        setResolution: function() {
+            this.resolutionScale = this.resolution / Math.max(window.innerWidth, window.innerHeight);
         }
     };
 
@@ -39,29 +61,31 @@ function init() {
         alert('Your browser does not support floating point textures.');
     }
 
-
     window.onresize = function() {
-        canvas.width = window.innerWidth / 2;
-        canvas.height = window.innerHeight / 2;
+        params.setResolution();
+        canvas.width = window.innerWidth * params.resolutionScale;
+        canvas.height = window.innerHeight * params.resolutionScale;
 
         gl.viewport(0, 0, canvas.width, canvas.height);
 
         constants.pixelX = 1 / canvas.width;
         constants.pixelY = 1 / canvas.height;
+        constants.gridScale = Math.sqrt(canvas.width * canvas.height);
+        constants.aspectRatio = canvas.width / canvas.height;
 
         vertexHandler = makeVertexHandler();
 
         framebuffers.velocity = makeFbo(gl, canvas.width, canvas.height, {backbuffer: true, format: gl.RGB, type: gl.FLOAT});
         framebuffers.pressure = makeFbo(gl, canvas.width, canvas.height, {backbuffer: true, format: gl.RGB, type: gl.FLOAT});
-
-        programs.fluidSim = makeFluidSimProgram();
-        programs.screen = makeScreenProgram();
+        framebuffers.divergence = makeFbo(gl, canvas.width, canvas.height, {format: gl.RGB, type: gl.FLOAT});
     };
     window.onresize();
-
+    
+    programs.fluidSim = makeFluidSimProgram();
     programs.addForce = makeAddForceProgram();
+    programs.screen = makeScreenProgram();
 
-    canvas.onmousemove = mouseHandler;
+    window.onmousemove = mouseHandler;
 
     function mouseHandler(e) {
 
@@ -87,7 +111,7 @@ function init() {
             for (var i = 0; i < input.smoothing; i++){
                 mouseHandler.dx0[i] = 0;
                 mouseHandler.dy0[i] = 0;
-                mouseHandler.speed0[i] = 0.001;
+                mouseHandler.speed0[i] = 0;
             }
         }
         input.mouseX = e.clientX / window.innerWidth;
@@ -97,8 +121,8 @@ function init() {
         input.mouseDy = mouseHandler.y0 - e.clientY;
 
         var time = Date.now();
-        input.speed = Math.max(Math.abs(input.mouseDx), Math.abs(input.mouseDy)) / Math.max(time - mouseHandler.t0, 0.001);
-        input.speed = Math.min(input.speed, 2);
+        input.speed = Math.sqrt(input.mouseDx * input.mouseDx + input.mouseDy * input.mouseDy) / Math.max(time - mouseHandler.t0, Number.MIN_VALUE);
+        input.speed = Math.min(input.speed, 3);
 
         smooth('mouseDx', 'dx0');
         smooth('mouseDy', 'dy0');
@@ -179,7 +203,7 @@ function makeVertexHandler() {
 function makeAddForceProgram() {
 
     var program = makeProgram(gl, 'vertex-shader', 'add-force-shader',
-                             {uniforms: ['u_mouse', 'u_mouseDelta', 'u_speed', 'u_resolution']});
+                             {uniforms: ['u_mouse', 'u_mouseDelta', 'u_speed', 'u_resolution', 'u_gridScale', 'u_mouseStrength']});
 
     return {
         draw: function() {
@@ -187,6 +211,7 @@ function makeAddForceProgram() {
             gl.uniform2f(program.u_mouse, input.mouseX, input.mouseY);
             gl.uniform2f(program.u_mouseDelta, input.mouseDx, input.mouseDy);
             gl.uniform1f(program.u_speed, input.speed);
+            gl.uniform1f(program.u_gridScale, params.resolution);
             gl.uniform2f(program.u_resolution, canvas.width, canvas.height);
             framebuffers.velocity.use();
             vertexHandler.drawInterior();
@@ -198,27 +223,25 @@ function makeFluidSimProgram() {
 
 
     var pAdvect       = makeProgram(gl, 'vertex-shader', 'advect-shader',
-                                    {uniforms: ['u_resolution']}),
+                                    {uniforms: ['u_aspectRatio', 'u_gridScale', 'u_viscosity']}),
 
         pDiffuse      = makeProgram(gl, 'vertex-shader', 'diffuse-shader',
-                                    {uniforms: ['u_onePixel']}),
+                                    {uniforms: ['u_onePixel', 'u_gridScale']}),
 
         pDivergence   = makeProgram(gl, 'vertex-shader', 'divergence-shader',
-                                    {uniforms: ['u_resolution', 'u_onePixel']}),
+                                    {uniforms: ['u_onePixel', 'u_gridScale']}),
         
-        pZeroPressure = makeProgram(gl, 'vertex-shader', 'zero-color-shader'),
+        pConservePressure = makeProgram(gl, 'vertex-shader', 'conserve-pressure-shader' ,
+                                    {uniforms: ['u_scale']}),
     
         pJacobi       = makeProgram(gl, 'vertex-shader', 'poisson-jacobi-shader',
-                                    {uniforms: ['u_onePixel', 'u_divergence']}),
+                                    {uniforms: ['u_onePixel', 'u_gridScale', 'u_divergence']}),
 
         pSubtraction  = makeProgram(gl, 'vertex-shader', 'gradient-subtract-shader',
-                                    {uniforms: ['u_resolution', 'u_onePixel', 'u_pressure']}),
+                                    {uniforms: ['u_onePixel', 'u_gridScale', 'u_pressure']}),
         
         pBoundary     = makeProgram(gl, 'vertex-shader', 'boundary-condition-shader',
                                     {uniforms: ['u_scale']});
-
-
-    var fboDivergence = makeFbo(gl, canvas.width, canvas.height, {format: gl.RGB, type: gl.FLOAT});
 
     function drawBoundary(scale) {
         gl.useProgram(pBoundary);
@@ -229,16 +252,10 @@ function makeFluidSimProgram() {
     return {
         draw: function() {
 
-            // advect
-            gl.useProgram(pAdvect);
-            gl.uniform2f(pAdvect.u_resolution, canvas.width, canvas.height);
-            framebuffers.velocity.use();
-            vertexHandler.drawInterior();
-            drawBoundary(-1);
-
             // diffuse
             // gl.useProgram(pDiffuse);
             // gl.uniform2f(pDiffuse.u_onePixel, constants.pixelX, constants.pixelY);
+            // gl.uniform1f(pDiffuse.u_gridScale, constants.gridScale);
             // for (var i = 0; i < 20; i++) {
             //     gl.useProgram(pDiffuse);
             //     framebuffers.velocity.use();
@@ -246,26 +263,38 @@ function makeFluidSimProgram() {
             //     drawBoundary(-1);
             // }
 
+            // advect
+            gl.useProgram(pAdvect);
+            gl.uniform1f(pAdvect.u_gridScale, constants.gridScale);
+            gl.uniform2f(pAdvect.u_aspectRatio, 1, constants.aspectRatio);
+            gl.uniform1f(pAdvect.u_viscosity, params.viscosity);
+            framebuffers.velocity.use();
+            vertexHandler.drawInterior();
+            drawBoundary(-1);
+
             // project
             gl.useProgram(pDivergence);
+            gl.uniform2f(pDivergence.u_onePixel, constants.pixelX, constants.pixelY);
+            gl.uniform1f(pDivergence.u_gridScale, constants.gridScale);
             gl.activeTexture(gl.TEXTURE0);
             gl.bindTexture(gl.TEXTURE_2D, framebuffers.velocity.texture);
-            gl.uniform2f(pDivergence.u_onePixel, constants.pixelX, constants.pixelY);
-            gl.uniform2f(pDivergence.u_resolution, canvas.width, canvas.height);
-            fboDivergence.use();
+            framebuffers.divergence.use();
             vertexHandler.drawInterior();
             drawBoundary(1);
 
-            gl.useProgram(pZeroPressure);
+            gl.useProgram(pConservePressure);
+            gl.uniform1f(pConservePressure.u_scale, params.pressure);
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, framebuffers.pressure.texture);
             framebuffers.pressure.use();
             vertexHandler.drawClosure();
 
             gl.useProgram(pJacobi);
-            gl.activeTexture(gl.TEXTURE1);
-            gl.bindTexture(gl.TEXTURE_2D, fboDivergence.texture);
-            gl.uniform1i(pJacobi.u_divergence, 1);
             gl.uniform2f(pJacobi.u_onePixel, constants.pixelX, constants.pixelY);
-            for (var i = 0; i < 80; i++) {
+            gl.activeTexture(gl.TEXTURE1);
+            gl.bindTexture(gl.TEXTURE_2D, framebuffers.divergence.texture);
+            gl.uniform1i(pJacobi.u_divergence, 1);
+            for (var i = 0; i < 40; i++) {
                 gl.useProgram(pJacobi);
                 framebuffers.pressure.use();
                 vertexHandler.drawInterior();
@@ -273,11 +302,11 @@ function makeFluidSimProgram() {
             }
 
             gl.useProgram(pSubtraction);
+            gl.uniform2f(pSubtraction.u_onePixel, constants.pixelX, constants.pixelY);
+            gl.uniform1f(pSubtraction.u_gridScale, constants.gridScale);
             gl.activeTexture(gl.TEXTURE1);
             gl.bindTexture(gl.TEXTURE_2D, framebuffers.pressure.texture);
             gl.uniform1i(pSubtraction.u_pressure, 1);
-            gl.uniform2f(pSubtraction.u_onePixel, constants.pixelX, constants.pixelY);
-            gl.uniform2f(pSubtraction.u_resolution, canvas.width, canvas.height);
             framebuffers.velocity.use();
             vertexHandler.drawInterior();
             drawBoundary(-1);
@@ -287,30 +316,18 @@ function makeFluidSimProgram() {
 
 function makeScreenProgram() {
     var program = makeProgram(gl, 'vertex-shader', 'screen-shader',
-                              {uniforms: ['u_pressure', 'u_background']});
-
-    var backgroundTexture = function setBackground() {
-        var tempProg = makeProgram(gl, 'vertex-shader', 'background-shader');
-        var tempFbo = makeFbo(gl, canvas.width, canvas.height);
-        gl.useProgram(tempProg);
-        tempFbo.use();
-        vertexHandler.drawClosure();
-        gl.useProgram(null);
-        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-        return tempFbo.texture;
-    }();
+                              {uniforms: ['u_gridScale', 'u_pressure', 'u_background']});
 
     return {
         draw: function() {
             gl.useProgram(program);
             gl.uniform1i(program.u_pressure, 1);
             gl.uniform1i(program.u_background, 2);
+            gl.uniform1f(program.u_gridScale, constants.gridScale);
             gl.activeTexture(gl.TEXTURE0);
             gl.bindTexture(gl.TEXTURE_2D, framebuffers.velocity.texture);
             gl.activeTexture(gl.TEXTURE1);
             gl.bindTexture(gl.TEXTURE_2D, framebuffers.pressure.texture);
-            gl.activeTexture(gl.TEXTURE2);
-            gl.bindTexture(gl.TEXTURE_2D, backgroundTexture);
             gl.bindFramebuffer(gl.FRAMEBUFFER, null);
             vertexHandler.drawClosure();
         }
@@ -322,11 +339,6 @@ function animate() {
     programs.screen.draw();
     window.requestAnimationFrame(animate);
 }
-
-// gl.bindAttribLocation(program, 0, 'a_position');
-// gl.bindAttribLocation(program, 1, 'a_offset');
-
-// generic functions
 
 function makeFbo(gl, width, height, params) {
 
@@ -396,8 +408,8 @@ function makeProgram(gl, vertexShaderID, fragmentShaderID, params) {
     gl.compileShader(fragmentShader);
     gl.attachShader(program, fragmentShader);
 
-    gl.bindAttribLocation(program, 0, 'a_position');
-    gl.bindAttribLocation(program, 1, 'a_offset');
+    gl.bindAttribLocation(program, constants.attribs.a_position, 'a_position');
+    gl.bindAttribLocation(program, constants.attribs.a_offset, 'a_offset');
 
     gl.linkProgram(program);
 
@@ -408,6 +420,35 @@ function makeProgram(gl, vertexShaderID, fragmentShaderID, params) {
     }
 
     return program;
+}
+
+function initGui() {
+
+    var controller = {
+        viscosity: 30,
+        pressure: 20
+    };
+
+    var gui = new dat.GUI();
+    gui.add(params, 'resolution', 100, 1500).step(10).name('Resolution').onFinishChange(window.onresize);
+    gui.add(controller, 'viscosity', 1, 100).step(1).name('Viscosity').onChange(onViscosityChange);
+    gui.add(controller, 'pressure', 0, 100).step(1).name('Pressure').onChange(onPressureChange);
+
+    function onViscosityChange(x) {
+        params.viscosity = polyLerp(x, 1, 35, 100, 1, 6, 50);
+    }
+    onViscosityChange(controller.viscosity);
+
+    function onPressureChange(x) {
+        params.pressure = polyLerp(x, 0, 50, 100, 0, 0.75, 1.0);
+    }
+    onPressureChange(controller.pressure);
+
+    function polyLerp(x, x0, x1, x2, y0, y1, y2) {
+        return y0 * (x - x1) * (x - x2) / (x0 - x1) / (x0 - x2) +
+               y1 * (x - x0) * (x - x2) / (x1 - x0) / (x1 - x2) +
+               y2 * (x - x0) * (x - x1) / (x2 - x0) / (x2 - x1);
+    }
 }
 
 })();
