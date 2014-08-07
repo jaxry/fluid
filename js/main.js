@@ -23,12 +23,6 @@ function init() {
         addForce: null,
         screen: null
     };
-    input = {
-        smoothing: 4,
-        mouseX: 0, mouseY: 0,
-        mouseDx: 0, mouseDy: 0,
-        speed: 0
-    };
     constants = {
         pixelX: null,
         pixelY: null,
@@ -40,15 +34,15 @@ function init() {
         }
     };
     params = {
-        resolution: 500,
+        resolution: 450,
         resolutionScale: null,
         iterations: 40,
         viscosity: null,
         pressure: null,
-        c1: [128, 0, 255],
-        c2: [128, 255, 255],
-        c3: [128, 0, 0],
-        c4: [128, 255, 0],
+        c1: [100, 0, 255],
+        c2: [100, 255, 255],
+        c3: [100, 0, 0],
+        c4: [100, 255, 0],
         c5: [200, 0, 0],
         
         setResolution: function() {
@@ -91,59 +85,82 @@ function init() {
     };
     window.onresize();
     
+    input = makeInputHandler();
     programs.fluidSim = makeFluidSimProgram();
-    programs.addForce = makeAddForceProgram();
     programs.screen = makeScreenProgram();
 
-    window.onmousemove = mouseHandler;
+    window.onmousemove = function(e) {
+        input.compute(e.clientX, e.clientY, window.innerWidth, window.innerHeight);
+        programs.fluidSim.addForce();
+    };
+}
 
-    function mouseHandler(e) {
+function animate() {
+    programs.fluidSim.draw();
+    programs.screen.draw();
+    input.smooth();
+    window.requestAnimationFrame(animate);
+}
 
-        function smooth(member, array) {
+function makeInputHandler() {
+    var smoothing = 5;
 
-            for (var i = 0; i < input.smoothing; i++) {
-                input[member] += mouseHandler[array][i];
-            }
-            input[member] /= input.smoothing + 1;
-            for (var i = 0; i < input.smoothing-1; i++){
-                mouseHandler[array][i] = mouseHandler[array][i+1];
-            }
-            mouseHandler[array][input.smoothing-1] = input[member];
+    var check,
+        x0, y0,
+        t0 = Date.now(),
+        dx0 = new Array(smoothing),
+        dy0 = new Array(smoothing),
+        speed0 = new Array(smoothing);
+        for (var i = 0; i < smoothing; i++) {
+            dx0[i] = dy0[i] = speed0[i] = 0;
         }
 
-        if (!mouseHandler.x0) {
-            mouseHandler.x0 = e.clientX;
-            mouseHandler.y0 = e.clientY;
-            mouseHandler.t0 = Date.now();
-            mouseHandler.dx0 = new Array(input.smoothing);
-            mouseHandler.dy0 = new Array(input.smoothing);
-            mouseHandler.speed0 = new Array(input.smoothing);
-            for (var i = 0; i < input.smoothing; i++){
-                mouseHandler.dx0[i] = 0;
-                mouseHandler.dy0[i] = 0;
-                mouseHandler.speed0[i] = 0;
-            }
+    function smoothArray(obj, member, array) {
+        for (var i = 0; i < smoothing; i++) {
+            obj[member] += array[i];
         }
-        input.mouseX = e.clientX / window.innerWidth;
-        input.mouseY = 1 - e.clientY / window.innerHeight;
-
-        input.mouseDx = e.clientX - mouseHandler.x0;
-        input.mouseDy = mouseHandler.y0 - e.clientY;
-
-        var time = Date.now();
-        input.speed = Math.sqrt(input.mouseDx * input.mouseDx + input.mouseDy * input.mouseDy) / Math.max(time - mouseHandler.t0, Number.MIN_VALUE);
-        input.speed = Math.min(input.speed, 3);
-
-        smooth('mouseDx', 'dx0');
-        smooth('mouseDy', 'dy0');
-        smooth('speed', 'speed0');
-
-        mouseHandler.x0 = e.clientX;
-        mouseHandler.y0 = e.clientY;
-        mouseHandler.t0 = time;
-
-        programs.addForce.draw();
+        input[member] /= smoothing + 1;
+        for (var i = 0; i < smoothing-1; i++){
+            array[i] = array[i+1];
+        }
+        array[smoothing-1] = obj[member];
     }
+
+    return {
+        mouseX: 0,
+        mouseY: 0,
+        mouseDx: 0,
+        mouseDy: 0,
+        speed: 0,
+        compute: function(clientX, clientY, width, height) {
+
+            this.mouseX = clientX / width;
+            this.mouseY = 1 - clientY / height;
+            this.mouseDx = (clientX - x0) || 0;
+            this.mouseDy = (y0 - clientY) || 0;
+
+            var time = Date.now();
+            this.speed = Math.sqrt(this.mouseDx * this.mouseDx + this.mouseDy * this.mouseDy) / Math.max(time - t0, Number.MIN_VALUE);
+            this.speed = Math.min(this.speed, 3) / Math.max(width, height);
+
+            smoothArray(this, 'mouseDx', dx0);
+            smoothArray(this, 'mouseDy', dy0);
+            smoothArray(this, 'speed', speed0);
+
+            x0 = clientX;
+            y0 = clientY;
+            t0 = time;
+            check = true;
+        },
+        smooth: function() {
+            if (check && Date.now() - t0 > 75) {
+                for (var i = 0; i < smoothing; i++) {
+                    dx0[i] = dy0[i] = speed0[i] = 0;
+                }
+                check = false;
+            }
+        }
+    };
 }
 
 function makeVertexHandler() {
@@ -210,48 +227,33 @@ function makeVertexHandler() {
     };
 }
 
-function makeAddForceProgram() {
-
-    var program = makeProgram(gl, 'vertex-shader', 'add-force-shader',
-                             {uniforms: ['u_mouse', 'u_mouseDelta', 'u_speed', 'u_resolution', 'u_gridScale', 'u_mouseStrength']});
-
-    return {
-        draw: function() {
-            gl.useProgram(program);
-            gl.uniform2f(program.u_mouse, input.mouseX, input.mouseY);
-            gl.uniform2f(program.u_mouseDelta, input.mouseDx, input.mouseDy);
-            gl.uniform1f(program.u_speed, input.speed);
-            gl.uniform1f(program.u_gridScale, params.resolution);
-            gl.uniform2f(program.u_resolution, canvas.width, canvas.height);
-            framebuffers.velocity.use();
-            vertexHandler.drawInterior();
-        }
-    };
-}
-
 function makeFluidSimProgram() {
 
-
-    var pAdvect       = makeProgram(gl, 'vertex-shader', 'advect-shader',
-                                    {uniforms: ['u_aspectRatio', 'u_gridScale', 'u_viscosity']}),
-
-        pDiffuse      = makeProgram(gl, 'vertex-shader', 'diffuse-shader',
-                                    {uniforms: ['u_onePixel', 'u_gridScale']}),
-
-        pDivergence   = makeProgram(gl, 'vertex-shader', 'divergence-shader',
-                                    {uniforms: ['u_onePixel', 'u_gridScale']}),
+    var pAddForce    = makeProgram(gl, 'vertex-shader', 'add-force-shader',
+                                   {uniforms: ['u_mouse', 'u_mouseDelta', 'u_speed', 'u_resolution', 'u_gridScale', 'u_mouseStrength']}),
         
-        pConservePressure = makeProgram(gl, 'vertex-shader', 'conserve-pressure-shader' ,
-                                    {uniforms: ['u_scale']}),
+        pAdvect      = makeProgram(gl, 'vertex-shader', 'advect-shader',
+                                   {uniforms: ['u_aspectRatio', 'u_gridScale', 'u_viscosity']}),
+
+        pDiffuse     = makeProgram(gl, 'vertex-shader', 'diffuse-shader',
+                                   {uniforms: ['u_onePixel', 'u_gridScale']}),
+
+        pDivergence  = makeProgram(gl, 'vertex-shader', 'divergence-shader',
+                                   {uniforms: ['u_onePixel', 'u_gridScale']}),
+        
+        pPressure    = makeProgram(gl, 'vertex-shader', 'conserve-pressure-shader' ,
+                                   {uniforms: ['u_scale']}),
     
-        pJacobi       = makeProgram(gl, 'vertex-shader', 'poisson-jacobi-shader',
-                                    {uniforms: ['u_onePixel', 'u_gridScale', 'u_divergence']}),
+        pJacobi      = makeProgram(gl, 'vertex-shader', 'poisson-jacobi-shader',
+                                   {uniforms: ['u_onePixel', 'u_gridScale', 'u_divergence']}),
 
-        pSubtraction  = makeProgram(gl, 'vertex-shader', 'gradient-subtract-shader',
-                                    {uniforms: ['u_onePixel', 'u_gridScale', 'u_pressure']}),
+        pSubtraction = makeProgram(gl, 'vertex-shader', 'gradient-subtract-shader',
+                                   {uniforms: ['u_onePixel', 'u_gridScale', 'u_pressure']}),
         
-        pBoundary     = makeProgram(gl, 'vertex-shader', 'boundary-condition-shader',
-                                    {uniforms: ['u_scale']});
+        pBoundary    = makeProgram(gl, 'vertex-shader', 'boundary-condition-shader',
+                                   {uniforms: ['u_scale']});
+
+    var addForceCheck = false;
 
     function drawBoundary(scale) {
         gl.useProgram(pBoundary);
@@ -282,6 +284,19 @@ function makeFluidSimProgram() {
             vertexHandler.drawInterior();
             drawBoundary(-1);
 
+            // add force
+            if (addForceCheck) {
+                gl.useProgram(pAddForce);
+                gl.uniform2f(pAddForce.u_mouse, input.mouseX, input.mouseY);
+                gl.uniform2f(pAddForce.u_mouseDelta, input.mouseDx, input.mouseDy);
+                gl.uniform1f(pAddForce.u_speed, input.speed);
+                gl.uniform1f(pAddForce.u_gridScale, params.resolution);
+                gl.uniform2f(pAddForce.u_resolution, canvas.width, canvas.height);
+                framebuffers.velocity.use();
+                vertexHandler.drawInterior();
+                addForceCheck = false;
+            }
+
             // project
             gl.useProgram(pDivergence);
             gl.uniform2f(pDivergence.u_onePixel, constants.pixelX, constants.pixelY);
@@ -292,8 +307,8 @@ function makeFluidSimProgram() {
             vertexHandler.drawInterior();
             drawBoundary(1);
 
-            gl.useProgram(pConservePressure);
-            gl.uniform1f(pConservePressure.u_scale, params.pressure);
+            gl.useProgram(pPressure);
+            gl.uniform1f(pPressure.u_scale, params.pressure);
             gl.activeTexture(gl.TEXTURE0);
             gl.bindTexture(gl.TEXTURE_2D, framebuffers.pressure.texture);
             framebuffers.pressure.use();
@@ -320,6 +335,10 @@ function makeFluidSimProgram() {
             framebuffers.velocity.use();
             vertexHandler.drawInterior();
             drawBoundary(-1);
+        },
+
+        addForce: function() {
+            addForceCheck = true;
         }
     };
 }
@@ -363,12 +382,6 @@ function makeScreenProgram() {
 
         setColors: setColors
     };
-}
-
-function animate() {
-    programs.fluidSim.draw();
-    programs.screen.draw();
-    window.requestAnimationFrame(animate);
 }
 
 function makeFbo(gl, width, height, params) {
@@ -456,8 +469,8 @@ function makeProgram(gl, vertexShaderID, fragmentShaderID, params) {
 function initGui() {
 
     var controller = {
-        viscosity: 50,
-        pressure: 20
+        viscosity: 45,
+        pressure: 50
     };
 
     var gui = new dat.GUI();
@@ -472,7 +485,7 @@ function initGui() {
     gui.addColor(params, 'c5').name('Pressure Color').onChange(programs.screen.setColors);
 
     function onViscosityChange(x) {
-        params.viscosity = polyLerp(x, 1, 50, 100, 1, 8, 45);
+        params.viscosity = polyLerp(x, 1, 50, 100, 1, 11.7, 45);
     }
     onViscosityChange(controller.viscosity);
 
@@ -487,5 +500,4 @@ function initGui() {
                y2 * (x - x0) * (x - x1) / (x2 - x0) / (x2 - x1);
     }
 }
-
 })();

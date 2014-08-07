@@ -4,7 +4,7 @@
         <meta charset='utf-8'>
         <meta http-equiv='X-UA-Compatible' content='IE=edge,chrome=1'>
         <title>Fluid</title>
-        <meta name='description' content=''>
+        <meta name='description' content='Fluid Dynamics in WebGL'>
         <meta name='viewport' content='width=device-width'>
 
         <link rel='stylesheet' href='css/normalize.min.css'>
@@ -56,10 +56,8 @@
 
             varying vec2 v_texCoord;
 
-            float brush = 1.0;
-
-            float strength = u_speed * u_gridScale / 1100.0;
-            float radius = u_speed * u_gridScale / 150.0;
+            float strength = u_speed * u_gridScale * 35.0;
+            float radius = u_speed * u_gridScale * 20.0;
 
             void main() {
 
